@@ -3,6 +3,10 @@
     {
       "LambdaS3Bucket": "opsworkscm-server-mgmt-lambda-sources-us-east-1",
       "LambdaS3Objectkey": "opsworkscm-server-mgmt-lambdafunctions.zip"
+    },
+    {
+      "LambdaS3Bucket": "opsworkscm-server-mgmt-lambda-sources-us-west-1",
+      "LambdaS3Objectkey": "opsworkscm-server-mgmt-lambdafunctions.zip"
     }
   ]
 }
