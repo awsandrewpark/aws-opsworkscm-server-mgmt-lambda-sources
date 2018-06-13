@@ -117,12 +117,48 @@ def quit_pipeline(event, agent, successful, message):
         exit(0)
 
 def compose_message(cminfo, event):
+    # The default S3 bucket used for Artifact caching has a strict policy enforced which prevents
+    # browser/curl downloads due to missing signature version 4 thus the need for another bucket
+    # that will be a caching bucket without encryption. Part of message composing process is
+    # to upload the StarterKit artifact to the caching bucket and figure out its URL and return it
+    # to the caller
+
+    # First upload the artifact
+    s3 = boto3.resource('s3')
+
     s3location = event['CodePipeline.job']['data']['inputArtifacts'][0]['location']['s3Location']
-    dlurl="https://s3.amazonaws.com/%s/%s" % (s3location['bucketName'],s3location['objectKey'])
+    destbucket="%s-starterkit" % s3location['bucketName']
+    destkey=s3location['objectKey']
+    copy_source = {
+        'Bucket': s3location['bucketName'],
+        'Key': s3location['objectKey']
+    }
+    try:
+        s3.meta.client.copy(copy_source, destbucket, destkey)
+    except Exception as e:
+        print (e)
+        message="The Starter Kit object could not be copied to the caching bucket %s. Exiting..." % destbucket
+        return ""
+    
+    object_acl = s3.ObjectAcl(destbucket,destkey)
+    try:
+        #response = s3.put_object_acl(
+      #    ACL='public-read',
+        #    Bucket=destbucket,
+        #    Key=destkey,
+        #)
+        response=object_acl.put(
+            ACL='public-read'
+        )
+    except Exception as e:
+        print (e)
+        message="I could not change the permission to public read on an S3 object s3://%s/%s" % (destbucket,destkey)
+        return ""
+
+    dlurl="https://s3.amazonaws.com/%s/%s" % (destbucket,s3location['objectKey'])
     message = cminfo + "\nYou can download the starter kit(s) here: %s\n" % dlurl
 
     return message
-
 
 def main(event, context):
     # In the opsworkscm_mgmt_live_check.py, we are checking following:
@@ -183,6 +219,8 @@ def main(event, context):
 
     # Let's compose a message that includes a URL to the StarterKit
     message=compose_message(cminfo, event)
+    if not message:
+        quit_pipeline(event, cp_c, False, 'A proper messag could not be staged. Exiting...')
     print "DEBUG message: ", message
 
     # Send to the SNS queue
