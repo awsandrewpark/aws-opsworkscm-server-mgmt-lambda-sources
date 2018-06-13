@@ -164,6 +164,16 @@ def main(event, context):
     except KeyError:
         print "ops_delete_if_absent_entry option not present. Assuming ops_delete_if_absent_entry == False"
 
+    try:
+        ops_sns_arn = config_file['ops_sns_arn']
+        match = re.match("^arn:aws:sns:",ops_sns_arn)
+        if not match:
+            message="An SNS topic ARN must start with arn:aws:sns: string but you provided %s" % ops_sns_arn
+            quit_pipeline(event, cp_c, False, message)
+        print "SNS ARN %s has been provided.  We will use that to communicate the credential(s) information." % ops_sns_arn
+    except KeyError:
+        print "ops_sns_arn option is not present.  Assuming no notification."
+
     # Loop through ops_env objects in the json file and ensure that we all necessary fields defined
     # namely required fields are: ops_account and ops_region
     #        optional field is  : ops_key_pair_name
@@ -211,7 +221,7 @@ def main(event, context):
         except KeyError:
             # This is OK.  We'll use default
             print "ops_engine_model is not specified using the default"
-        
+
         try:
             engine_version = configparam['ops_engine_version']
             if (opsengine == "Chef" and engine_version != "12") or (opsengine == "Puppet" and engine_version != "2017"):

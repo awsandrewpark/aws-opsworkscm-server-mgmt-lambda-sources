@@ -1,11 +1,11 @@
 # Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this
 # software and associated documentation files (the "Software"), to deal in the Software
 # without restriction, including without limitation the rights to use, copy, modify,
 # merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
 # permit persons to whom the Software is furnished to do so.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
 # PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
@@ -90,7 +90,7 @@ def read_artifact_as_config(event, client):
     raise RuntimeError('Unable to find config.json in build artifact output')
 
 
-def save_state_as_artifact(event, client, actionlist):
+def save_buildspec_as_artifact(event, client, actionlist, ops_sns_arn):
     output_artifact = event['CodePipeline.job']['data']['outputArtifacts'][0]
     artifact_location = output_artifact['location']['s3Location']
 
@@ -102,12 +102,19 @@ def save_state_as_artifact(event, client, actionlist):
 version: 0.2
 
 phases:
+  pre_build:
+    commands:
+      - mkdir output-tmpdir
+      - mkdir output-artifactdir
+
   build:
     commands:
       - echo Build started on `date`
       - echo running aws cli command ...
 """
     for cl_entry in actionlist['ops_env']:
+        print "cl_entry: ",cl_entry
+
         try:
             if cl_entry['ops_delete']:
                 s += "      - aws opsworks-cm delete-server --server-name %s\n" % cl_entry['name']
@@ -159,7 +166,7 @@ phases:
             s += " --preferred-maintenance-window '{}'".format(cl_entry['ops_maintenance_window'])
         except KeyError:
             pass
-        
+
         backup_boolean_present = False
         try:
             backup_boolean = cl_entry['ops_use_automated_backup']
@@ -182,13 +189,32 @@ phases:
                 s += " --preferred-backup-window '{}'".format(cl_entry['ops_backup_window'])
             except KeyError:
                 pass
-        s += "\n"
 
+        # Capture the output to the temporary directory so we can parse through them later
+        if cl_entry['ops_engine'] == "Chef":
+            s += " --query 'Server.[Endpoint, EngineAttributes[*].Value]' --output text | tee output-tmpdir/chef.%s.output\n" % cl_entry['name']
+        else:
+            s += " --query 'Server.[Endpoint, EngineAttributes[*].Value]' --output text | tee output-tmpdir/puppet.%s.output\n" % cl_entry['name']
     s += """
   post_build:
     commands:
       - echo Build completed on `date`
+      - ls output-tmpdir/chef* > /dev/null 2>&1 && for i in output-tmpdir/chef*;do Output=$(cat $i); server=`echo $i | sed 's/^.*chef\.//; s/\.output$//'`; URL="https://$(echo $Output | cut -d ' ' -f1)"; CM_SKIT=$(echo $Output | cut -d ' ' -f2); CLIENTPEM=$(echo $Output | cut -d ' ' -f3-35); [ -n "$CM_SKIT" ] && echo $CM_SKIT | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; CM_PWD=$(echo $Output | cut -d ' ' -f36); [ -n "$CM_PWD" ] && aws ssm put-parameter --name "/opsworks/cm/chef/$server/consolepassword" --type "SecureString" --value $CM_PWD; [ -n "$URL" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n "$URL" ] && echo "Please retrieve admin password from SSM parameter store /opsworks/cm/chef/$server/consolepassword" >> output-artifactdir/cminfo.log; [ -n "$CLIENTPEM" ] && aws ssm put-parameter --name "/opsworks/cm/chef/$server/client.pem" --type "SecureString" --value "$CLIENTPEM"; [ -n "$CLIENTPEM" ] && echo "Please retrieve client PEM from SSM parameter store /opsworks/cm/chef/$server/client.pem" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/chef.emptyartifact.output
+      - ls output-tmpdir/puppet* > /dev/null 2>&1 && for i in output-tmpdir/puppet*;do server=`echo $i | sed  's/^.*puppet\.//; s/\.output$//'`; tail -1 $i | awk '{print $1}' > dump.out; [ -s dump.out ] && cat dump.out | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; URL="https://`head -1 $i`"; tail -1 $i | awk '{print $2}' > dump2.out; [ -s dump2.out ] && aws ssm put-parameter --name "/opsworks/cm/puppet/$server/consolepassword" --type "SecureString" --value $(cat dump2.out); [ -n "$URL" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n "$URL" ] && echo "Please retrieve admin password from SSM parameter store /opsworks/cm/puppet/$server/consolepassword" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/puppet.emptyartifact.output
+      - ls output-artifactdir/cminfo.log > /dev/null 2>&1 && cat output-artifactdir/cminfo.log || echo "empty" > output-artifactdir/cminfo.log
 """
+
+    if ops_sns_arn:
+        s += "      - echo %s >> output-artifactdir/cminfo.log" % ops_sns_arn
+
+    s += """
+artifacts:
+  files:
+    - '*'
+  discard-paths: yes
+  base-directory: output-artifactdir/
+"""
+
     print('string is: %s' % s)
 
     f = open('/tmp/buildspec.yml', 'w')
@@ -290,6 +316,25 @@ def main(event, context):
     except:
         quit_pipeline(event, cp_c, False, 'Could not connect to S3 or failed to access the config file')
 
+    topicfound = False
+    try:
+        ops_sns_arn = config_file['ops_sns_arn']
+        sns_c = boto3.client('sns', region_name=local_region)
+        response = sns_c.list_topics()
+        print "SNS Topics dumnp: ", response
+
+        for topic in response['Topics']:
+            topicarn = topic['TopicArn']
+            if topicarn == ops_sns_arn:
+                print "Topic %s found" % ops_sns_arn
+                topicfound = True
+        if not topicfound:
+            message = "Could not find SNS topic %s"%ops_sns_arn
+            quit_pipeline(event, cp_c, False, message)
+    except KeyError:
+        ops_sns_arn = ""
+        print "ops_sns_arn not defined. No notification will be sent."
+
     actionlist = {'ops_env': []}
     roguehash = dict()
     # Loop through ops_env objects and perform live check
@@ -347,6 +392,11 @@ def main(event, context):
         #         NOTE: if (ops_delete_if_absent_entry == true) then we need to delete the OpsWorks CM servers that are
         #               not found in the opsworkscmconfig.json file.
         serverfound = False
+        try:
+            delete_if_absent = config_file['ops_delete_if_absent_entry']
+        except KeyError:
+            delete_if_absent = False
+
         for reservation in response['Reservations']:
             if serverfound:
                 break
@@ -360,7 +410,7 @@ def main(event, context):
                 if tags['Key'] == 'opsworks-cm:server-name' and not (instancestate == 'terminated' or instancestate == 'shutting-down'):
                     try:
                         legitinstance=roguehash[tags['Value']]
-                        if legitinstance != 'legit': 
+                        if legitinstance != 'legit':
                             roguehash[tags['Value']] = 'rogue'
                     except KeyError:
                         roguehash[tags['Value']] = 'rogue'
@@ -394,7 +444,7 @@ def main(event, context):
                         ' Exiting...' % (opssubnet, opsregion)
                 quit_pipeline(event, cp_c, False, message)
 
-    if not config_file['ops_env'] and config_file['ops_delete_if_absent_entry']:
+    if not config_file['ops_env'] and delete_if_absent:
         # This is known as "clean up" mode (an empty ops_env file with ops_delete_if_absent_entry=True)
         # Need to use ec2 describe-instance to discover all OpsWorks CMs and add them for deletion
         ec2 = boto3_agent_from_sts('ec2', 'client', local_region)
@@ -411,7 +461,7 @@ def main(event, context):
                     roguehash[tags['Value']] = 'rogue'
 
     # If ops_delete_if_absent_entry option is true and there are elements in the roguehash hash then add it for deleting
-    if roguehash and config_file['ops_delete_if_absent_entry']:
+    if roguehash and delete_if_absent:
         for key in roguehash:
             if roguehash[key] == 'rogue':
                 element = { "name": key, "ops_delete": "True" }
@@ -424,7 +474,7 @@ def main(event, context):
         print('actionlist is {}'.format(actionlist))
 
     # we have all the pieces we need.  Upload the artifact in zip format
-    save_state_as_artifact(event, artifact_s3_c, actionlist)
+    save_buildspec_as_artifact(event, artifact_s3_c, actionlist, ops_sns_arn)
     quit_pipeline(event, cp_c, True, 'Live Check completed successfully')
 
 
@@ -459,9 +509,9 @@ def outside_lambda_handler():
   "CodePipeline.job": {
     "data": {
       "artifactCredentials": {
-        "secretAccessKey": "ZTZOm+mICn+ysiEsNQQ6t1RfeZ0pOjWeCdvnCsXY",
-        "accessKeyId": "ASIAIR2EHR6FJRLXNHKQ",
-        "sessionToken": "FQoDYXdzEDQaDGMlI+VE9ZmRvFfaTCKsAc/M7Z5UVdHxil59e+OCBiwZsJ/osRyPWG1SML7rkFbndWvsblnGhNzkKLJ8cFjtSSzn3suytAlEHf9LpBuiX3zzhwIuyV7LIhPjbRzdpgK+5efV77nysLKZkqrvbvDRQmEnvEnhLIBxPxSU92hB1vOqCDhQxUia2JExEwwYSOvUBpcnWTubUqt6isWddEL8sDYWffoV+knS5a647Zr6jLxUAdUvlDkW9/yShoAonJqo1wU="
+        "secretAccessKey": "e/m6R1q5wksQBqsmuemqpDPqzuqwQwkuW1kDDcO7",
+        "accessKeyId": "ASIAIF6E2XINLDWI3AOA",
+        "sessionToken": "FQoDYXdzEDYaDMp8ssnFNuhJ+f0nWyKsAZGl0En1E5qHgDH+Vv4kQX3kEbmgSoUJf1UXFRaJ052jXukgFdtncgcZPpYIBabLCy/LKdm6MxJB1UlPQWOyGFCEZ2pTXIExvNxKI4JQ8XMP0htbNaidR6Vkxb3U+iKqcRC+HItqiAhgNVoG3jrIIF7nz0NQ0STVrv0N+e7gChrztXgz/pX2CRi1CSgoHndAKJhQNErd2rM6c0CR/GeuOQYsq1bKnJHp1XUOkIAozbX72AU="
       },
       "actionConfiguration": {
         "configuration": {
@@ -473,8 +523,8 @@ def outside_lambda_handler():
           "location": {
             "type": "S3",
             "s3Location": {
-              "objectKey": "opsworkscm-server-mg/OpsWorksCM/RO15QBx",
-              "bucketName": "codepipeline-stack1"
+              "objectKey": "opsworkscm-server-mg/OpsWorksCM/fZVNN2C",
+              "bucketName": "codepipeline-opsworkscm-stack2"
             }
           },
           "name": "OpsWorksCMmgmt",
