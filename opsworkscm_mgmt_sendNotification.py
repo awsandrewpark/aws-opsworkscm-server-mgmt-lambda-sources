@@ -156,7 +156,7 @@ def compose_message(cminfo, event):
         return ""
 
     dlurl="https://s3.amazonaws.com/%s/%s" % (destbucket,s3location['objectKey'])
-    message = cminfo + "\nYou can download the starter kit(s) here: %s\n" % dlurl
+    message = cminfo + "\nYou can download the information package(s) here: %s\n" % dlurl
 
     return message
 

@@ -117,7 +117,7 @@ phases:
 
         try:
             if cl_entry['ops_delete']:
-                s += "      - aws opsworks-cm delete-server --server-name %s\n" % cl_entry['name']
+                s += "      - aws opsworks-cm delete-server --server-name %s && echo CM server %s is being deleted >> output-artifactdir/cminfo.log\n" % (cl_entry['name'], cl_entry['name'])
                 continue
         except KeyError:
             pass
@@ -325,9 +325,11 @@ def main(event, context):
 
         for topic in response['Topics']:
             topicarn = topic['TopicArn']
+            print "topicarn is %s and ops_sns_arn is %s" % (topicarn, ops_sns_arn)
             if topicarn == ops_sns_arn:
                 print "Topic %s found" % ops_sns_arn
                 topicfound = True
+                break
         if not topicfound:
             message = "Could not find SNS topic %s"%ops_sns_arn
             quit_pipeline(event, cp_c, False, message)
@@ -398,8 +400,6 @@ def main(event, context):
             delete_if_absent = False
 
         for reservation in response['Reservations']:
-            if serverfound:
-                break
             if 'Tags' not in reservation['Instances'][0]:
                 continue
             instancestate = reservation['Instances'][0]['State']['Name']
@@ -414,15 +414,14 @@ def main(event, context):
                             roguehash[tags['Value']] = 'rogue'
                     except KeyError:
                         roguehash[tags['Value']] = 'rogue'
+                    print "roguehash updated: ", roguehash
 
                 # Be careful in understanding in following conditions.
                 # A OpsWorksCM server is considered to be in existence iff value of the tag "opsworks-cm:server-name" matches
                 # the one that's passed in AND its state is neither "terminated" nor "shutting-down"
-                if tags['Key'] == 'opsworks-cm:server-name' and tags['Value'] == opsname and not (
-                        instancestate == 'terminated' or instancestate == 'shutting-down'):
+                if tags['Key'] == 'opsworks-cm:server-name' and tags['Value'] == opsname and not (instancestate == 'terminated' or instancestate == 'shutting-down'):
                     print('OpsWorksCM Server %s exists in the %s region' % (opsname, opsregion))
                     serverfound = True
-                    #del roguehash[opsname]
                     roguehash[opsname] = 'legit'
                     break
 

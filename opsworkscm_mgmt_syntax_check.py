@@ -161,6 +161,7 @@ def main(event, context):
         if delete_if_absent != "True" and delete_if_absent != "False":
             message="You must specify boolean value for the ops_delete_if_absent_entry parameter.\n I was given %s" % delete_if_absent
             quit_pipeline(event, cp_c, False, message)
+        print "ops_delete_if_absent_entry specified and its value is %s" % delete_if_absent
     except KeyError:
         print "ops_delete_if_absent_entry option not present. Assuming ops_delete_if_absent_entry == False"
 
