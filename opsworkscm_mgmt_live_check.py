@@ -117,13 +117,14 @@ phases:
 
         try:
             if cl_entry['ops_delete']:
-                s += "      - aws opsworks-cm delete-server --server-name %s && echo CM server %s is being deleted >> output-artifactdir/cminfo.log\n" % (cl_entry['name'], cl_entry['name'])
+                s += "      - aws --region %s opsworks-cm delete-server --server-name %s && echo CM server %s is being deleted >> output-artifactdir/cminfo.log\n" % (cl_entry['ops_region'], cl_entry['name'], cl_entry['name'])
+                s += "      - echo %s >> output-artifactdir/cminfo.log" % ops_sns_arn
                 continue
         except KeyError:
             pass
 
-        s += """      - aws opsworks-cm create-server --region '{}' --server-name "{}" --instance-profile-arn "arn:aws:iam::{}:instance-profile/aws-opsworks-cm-ec2-role" --service-role-arn "arn:aws:iam::{}:role/aws-opsworks-cm-service-role" --subnet-ids "{}" --engine {}""".format(cl_entry['ops_region'], cl_entry['name'], cl_entry['ops_account'], cl_entry['ops_account'], cl_entry['ops_subnet'],cl_entry['ops_engine'])
-
+        s += "      - aws opsworks-cm create-server --region %s --server-name %s --instance-profile-arn arn:aws:iam::%s:instance-profile/aws-opsworks-cm-ec2-role --service-role-arn arn:aws:iam::%s:role/aws-opsworks-cm-service-role --subnet-ids %s --engine %s" % (cl_entry['ops_region'], cl_entry['name'], cl_entry['ops_account'], cl_entry['ops_account'], cl_entry['ops_subnet'],cl_entry['ops_engine'])
+   
         # Try the optional parameters. If not found use default
         ## Defaults: --instance-type = m4.large
         ##           --preferred-maintenance-window = A random one-hour period on Tuesday, Wednesday or Friday (automatically selected if absent)
@@ -199,11 +200,10 @@ phases:
   post_build:
     commands:
       - echo Build completed on `date`
-      - ls output-tmpdir/chef* > /dev/null 2>&1 && for i in output-tmpdir/chef*;do Output=$(cat $i); server=`echo $i | sed 's/^.*chef\.//; s/\.output$//'`; URL="https://$(echo $Output | cut -d ' ' -f1)"; CM_SKIT=$(echo $Output | cut -d ' ' -f2); CLIENTPEM=$(echo $Output | cut -d ' ' -f3-35); [ -n "$CM_SKIT" ] && echo $CM_SKIT | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; CM_PWD=$(echo $Output | cut -d ' ' -f36); [ -n "$CM_PWD" ] && aws ssm put-parameter --name "/opsworks/cm/chef/$server/consolepassword" --type "SecureString" --value $CM_PWD; [ -n "$URL" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n "$URL" ] && echo "Please retrieve admin password from SSM parameter store /opsworks/cm/chef/$server/consolepassword" >> output-artifactdir/cminfo.log; [ -n "$CLIENTPEM" ] && aws ssm put-parameter --name "/opsworks/cm/chef/$server/client.pem" --type "SecureString" --value "$CLIENTPEM"; [ -n "$CLIENTPEM" ] && echo "Please retrieve client PEM from SSM parameter store /opsworks/cm/chef/$server/client.pem" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/chef.emptyartifact.output
-      - ls output-tmpdir/puppet* > /dev/null 2>&1 && for i in output-tmpdir/puppet*;do server=`echo $i | sed  's/^.*puppet\.//; s/\.output$//'`; tail -1 $i | awk '{print $1}' > dump.out; [ -s dump.out ] && cat dump.out | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; URL="https://`head -1 $i`"; tail -1 $i | awk '{print $2}' > dump2.out; [ -s dump2.out ] && aws ssm put-parameter --name "/opsworks/cm/puppet/$server/consolepassword" --type "SecureString" --value $(cat dump2.out); [ -n "$URL" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n "$URL" ] && echo "Please retrieve admin password from SSM parameter store /opsworks/cm/puppet/$server/consolepassword" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/puppet.emptyartifact.output
-      - ls output-artifactdir/cminfo.log > /dev/null 2>&1 && cat output-artifactdir/cminfo.log || echo "empty" > output-artifactdir/cminfo.log
 """
-
+    s += "      - ls output-tmpdir/chef* > /dev/null 2>&1 && for i in output-tmpdir/chef*;do Output=$(cat $i); server=`echo $i | sed 's/^.*chef\.//; s/\.output$//'`; URL=\"https://$(echo $Output | cut -d ' ' -f1)\"; CM_SKIT=$(echo $Output | cut -d ' ' -f2); CLIENTPEM=$(echo $Output | cut -d ' ' -f3-35); [ -n \"$CM_SKIT\" ] && echo $CM_SKIT | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; CM_PWD=$(echo $Output | cut -d ' ' -f36); [ -n \"$CM_PWD\" ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/chef/$server/consolepassword\" --type \"SecureString\" --value $CM_PWD; [ -n \"$URL\" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n \"$URL\" ] && echo \"Please retrieve admin password from SSM parameter store /opsworks/cm/chef/$server/consolepassword\" >> output-artifactdir/cminfo.log; [ -n \"$CLIENTPEM\" ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/chef/$server/client.pem\" --type \"SecureString\" --value \"$CLIENTPEM\"; [ -n \"$CLIENTPEM\" ] && echo \"Please retrieve client PEM from SSM parameter store /opsworks/cm/chef/$server/client.pem\" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/chef.emptyartifact.output" % (cl_entry['ops_region'], cl_entry['ops_region'])
+    s += "      - ls output-tmpdir/puppet* > /dev/null 2>&1 && for i in output-tmpdir/puppet*;do server=`echo $i | sed  's/^.*puppet\.//; s/\.output$//'`; tail -1 $i | awk '{print $1}' > dump.out; [ -s dump.out ] && cat dump.out | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; URL=\"https://`head -1 $i`\"; tail -1 $i | awk '{print $2}' > dump2.out; [ -s dump2.out ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/puppet/$server/consolepassword\" --type \"SecureString\" --value $(cat dump2.out); [ -n \"$URL\" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n \"$URL\" ] && echo \"Please retrieve admin password from SSM parameter store /opsworks/cm/puppet/$server/consolepassword\" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/puppet.emptyartifact.output" % cl_entry['ops_region']
+    s += "      - ls output-artifactdir/cminfo.log > /dev/null 2>&1 && cat output-artifactdir/cminfo.log || echo empty > output-artifactdir/cminfo.log"
     if ops_sns_arn:
         s += "      - echo %s >> output-artifactdir/cminfo.log" % ops_sns_arn
 
@@ -321,7 +321,7 @@ def main(event, context):
         ops_sns_arn = config_file['ops_sns_arn']
         sns_c = boto3.client('sns', region_name=local_region)
         response = sns_c.list_topics()
-        print "SNS Topics dumnp: ", response
+        print "SNS Topics dump: ", response
 
         for topic in response['Topics']:
             topicarn = topic['TopicArn']
@@ -339,6 +339,35 @@ def main(event, context):
 
     actionlist = {'ops_env': []}
     roguehash = dict()
+    opsworkscmhash = dict()
+
+    # loop through every supported to get complete list of OpsWorks CM instances
+    ## Currently following regions support opsworks-cm
+    opsworks_supported_region = [
+        "us-east-1",
+        "us-east-2",
+        "us-west-1",
+        "us-west-2",
+        "ap-northeast-1",
+        "ap-southeast-1",
+        "ap-southeast-2",
+        "eu-central-1",
+        "eu-west-1"
+    ]
+    for this_region in opsworks_supported_region:
+        ec2 = boto3_agent_from_sts('ec2', 'client', this_region)
+        instancesdump = ec2.describe_instances()
+        for reservation in instancesdump['Reservations']:
+            if 'Tags' not in reservation['Instances'][0]:
+                continue
+            instancestate = reservation['Instances'][0]['State']['Name']
+            for tags in reservation['Instances'][0]['Tags']:
+                if tags['Key'] == 'opsworks-cm:server-name' and not (instancestate == 'terminated' or instancestate == 'shutting-down'):
+                    opsworkscmhash[tags['Value']] = this_region
+
+    # Be skeptical and assume all instances are rogue.  We'll clear them later as we go through the config_file
+    roguehash = opsworkscmhash
+
     # Loop through ops_env objects and perform live check
     for i in config_file['ops_env']:
         opsname = i['name']
@@ -354,7 +383,7 @@ def main(event, context):
         keypairs = ec2.describe_key_pairs()
         response = ec2.describe_instances()
 
-        print("Checking config for opsname '{}': ".format(opsname))
+        print "Checking config for opsname '%s': " % opsname
 
         # Check1: local_account must be the same as the value of ops_account
         if local_account != opsaccount:
@@ -393,44 +422,16 @@ def main(event, context):
         #
         #         NOTE: if (ops_delete_if_absent_entry == true) then we need to delete the OpsWorks CM servers that are
         #               not found in the opsworkscmconfig.json file.
-        serverfound = False
         try:
             delete_if_absent = config_file['ops_delete_if_absent_entry']
         except KeyError:
             delete_if_absent = False
 
-        for reservation in response['Reservations']:
-            if 'Tags' not in reservation['Instances'][0]:
-                continue
-            instancestate = reservation['Instances'][0]['State']['Name']
-            for tags in reservation['Instances'][0]['Tags']:
-                # As soon as we found a server with 'opsworks-cm:server-name' tag, add it to the rogue hash.
-                # Once we confirm that the 'opsworks-cm:server-name' value matches the config's name, remove it from the rogue hash.
-                # This way, at the end, all that's left is pure rogue hash and we can optionally remove them.
-                if tags['Key'] == 'opsworks-cm:server-name' and not (instancestate == 'terminated' or instancestate == 'shutting-down'):
-                    try:
-                        legitinstance=roguehash[tags['Value']]
-                        if legitinstance != 'legit':
-                            roguehash[tags['Value']] = 'rogue'
-                    except KeyError:
-                        roguehash[tags['Value']] = 'rogue'
-                    print "roguehash updated: ", roguehash
-
-                # Be careful in understanding in following conditions.
-                # A OpsWorksCM server is considered to be in existence iff value of the tag "opsworks-cm:server-name" matches
-                # the one that's passed in AND its state is neither "terminated" nor "shutting-down"
-                if tags['Key'] == 'opsworks-cm:server-name' and tags['Value'] == opsname and not (instancestate == 'terminated' or instancestate == 'shutting-down'):
-                    print('OpsWorksCM Server %s exists in the %s region' % (opsname, opsregion))
-                    serverfound = True
-                    roguehash[opsname] = 'legit'
-                    break
-
-        if not serverfound:
-            print('Server %s does not exist in the %s region.  Adding to the actionlist.json' % (opsname, opsregion))
-            # opsname is not found in ec2 instance list.  Add the json in the actionlist dict
-            actionlist['ops_env'].append(i)
-
-            subnetfound = False
+        try:
+            testvalue = opsworkscmhash[opsname]
+            roguehash[opsname] = 'legit'
+            print "roguehash is now ", roguehash
+        except KeyError:
             # Check 4: Check whether the provided subnet ID exists or not
             subnetresponse = ec2.describe_subnets()
             for subnetID in subnetresponse['Subnets']:
@@ -443,27 +444,16 @@ def main(event, context):
                         ' Exiting...' % (opssubnet, opsregion)
                 quit_pipeline(event, cp_c, False, message)
 
-    if not config_file['ops_env'] and delete_if_absent:
-        # This is known as "clean up" mode (an empty ops_env file with ops_delete_if_absent_entry=True)
-        # Need to use ec2 describe-instance to discover all OpsWorks CMs and add them for deletion
-        ec2 = boto3_agent_from_sts('ec2', 'client', local_region)
-        response = ec2.describe_instances()
-        for reservation in response['Reservations']:
-            if 'Tags' not in reservation['Instances'][0]:
-                continue
-            instancestate = reservation['Instances'][0]['State']['Name']
-            for tags in reservation['Instances'][0]['Tags']:
-                # As soon as we found a server with 'opsworks-cm:server-name' tag, add it to the rogue hash.
-                # Once we confirm that the 'opsworks-cm:server-name' value matches the config's name, remove it from the rogue hash.
-                # This way, at the end, all that's left is pure rogue hash and we can optionally remove them.
-                if tags['Key'] == 'opsworks-cm:server-name' and not (instancestate == 'terminated' or instancestate == 'shutting-down'):
-                    roguehash[tags['Value']] = 'rogue'
+            # Mark opsname for creation
+            print('Server %s does not exist in the %s region.  Adding to the actionlist.json' % (opsname, opsregion))
+            actionlist['ops_env'].append(i)
+
 
     # If ops_delete_if_absent_entry option is true and there are elements in the roguehash hash then add it for deleting
     if roguehash and delete_if_absent:
         for key in roguehash:
-            if roguehash[key] == 'rogue':
-                element = { "name": key, "ops_delete": "True" }
+            if roguehash[key] != 'legit':
+                element = { "name": key, "ops_delete": "True", "ops_region": roguehash[key] }
                 print "Adding entry %s for deletion: " % element
                 actionlist['ops_env'].append(element)
 
@@ -508,9 +498,9 @@ def outside_lambda_handler():
   "CodePipeline.job": {
     "data": {
       "artifactCredentials": {
-        "secretAccessKey": "e/m6R1q5wksQBqsmuemqpDPqzuqwQwkuW1kDDcO7",
-        "accessKeyId": "ASIAIF6E2XINLDWI3AOA",
-        "sessionToken": "FQoDYXdzEDYaDMp8ssnFNuhJ+f0nWyKsAZGl0En1E5qHgDH+Vv4kQX3kEbmgSoUJf1UXFRaJ052jXukgFdtncgcZPpYIBabLCy/LKdm6MxJB1UlPQWOyGFCEZ2pTXIExvNxKI4JQ8XMP0htbNaidR6Vkxb3U+iKqcRC+HItqiAhgNVoG3jrIIF7nz0NQ0STVrv0N+e7gChrztXgz/pX2CRi1CSgoHndAKJhQNErd2rM6c0CR/GeuOQYsq1bKnJHp1XUOkIAozbX72AU="
+        "secretAccessKey": "GU6yKFQmrviwgy9sCwH0yWhp43uoAsdtAhzEqWXh",
+        "accessKeyId": "ASIAIV7JMPEP3ZCM7YXQ",
+        "sessionToken": "FQoDYXdzELD//////////wEaDGEIebG36lbgOA1zrCKsAZVeTqJWs/LE/j4VHAZWy+MQ9e2s+4TIbNVY3O0Pzv5O7RAP3U6o7KUQh1zoAukgxH4cNXBYWjZQdtuD9pkd8wHeQ04X88SOQxI9Uj/wl5VUaPmS52M6FdM3CaYlosllS/bN8FuIloOzvOpuZFfKZ4ZXznkXKfM/QFqI1eb+jLTXZD/6e0n51T+2UGyvkh9YWQS268+F3UKHb9nYrc7iMkAUywngXBJtBOcN2rgo6raW2QU="
       },
       "actionConfiguration": {
         "configuration": {
@@ -522,8 +512,8 @@ def outside_lambda_handler():
           "location": {
             "type": "S3",
             "s3Location": {
-              "objectKey": "opsworkscm-server-mg/OpsWorksCM/fZVNN2C",
-              "bucketName": "codepipeline-opsworkscm-stack2"
+              "objectKey": "opsworkscm-server-mg/OpsWorksCM/XAooIcP",
+              "bucketName": "codepipeline-opsworks-mgmt-6"
             }
           },
           "name": "OpsWorksCMmgmt",
@@ -535,8 +525,8 @@ def outside_lambda_handler():
           "location": {
             "type": "S3",
             "s3Location": {
-              "objectKey": "OpsWorksCM-server-mgmt/CreationLi/jgAFIbg",
-              "bucketName": "codepipeline-opsworkscm-stack1"
+              "objectKey": "opsworkscm-server-mgmt/CreationLi/blahblah",
+              "bucketName": "codepipeline-opsworks-mgmt-6"
             }
           },
           "name": "CreationList",
