@@ -118,13 +118,12 @@ phases:
         try:
             if cl_entry['ops_delete']:
                 s += "      - aws --region %s opsworks-cm delete-server --server-name %s && echo CM server %s is being deleted >> output-artifactdir/cminfo.log\n" % (cl_entry['ops_region'], cl_entry['name'], cl_entry['name'])
-                s += "      - echo %s >> output-artifactdir/cminfo.log" % ops_sns_arn
                 continue
         except KeyError:
             pass
 
         s += "      - aws opsworks-cm create-server --region %s --server-name %s --instance-profile-arn arn:aws:iam::%s:instance-profile/aws-opsworks-cm-ec2-role --service-role-arn arn:aws:iam::%s:role/aws-opsworks-cm-service-role --subnet-ids %s --engine %s" % (cl_entry['ops_region'], cl_entry['name'], cl_entry['ops_account'], cl_entry['ops_account'], cl_entry['ops_subnet'],cl_entry['ops_engine'])
-   
+
         # Try the optional parameters. If not found use default
         ## Defaults: --instance-type = m4.large
         ##           --preferred-maintenance-window = A random one-hour period on Tuesday, Wednesday or Friday (automatically selected if absent)
@@ -201,11 +200,11 @@ phases:
     commands:
       - echo Build completed on `date`
 """
-    s += "      - ls output-tmpdir/chef* > /dev/null 2>&1 && for i in output-tmpdir/chef*;do Output=$(cat $i); server=`echo $i | sed 's/^.*chef\.//; s/\.output$//'`; URL=\"https://$(echo $Output | cut -d ' ' -f1)\"; CM_SKIT=$(echo $Output | cut -d ' ' -f2); CLIENTPEM=$(echo $Output | cut -d ' ' -f3-35); [ -n \"$CM_SKIT\" ] && echo $CM_SKIT | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; CM_PWD=$(echo $Output | cut -d ' ' -f36); [ -n \"$CM_PWD\" ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/chef/$server/consolepassword\" --type \"SecureString\" --value $CM_PWD; [ -n \"$URL\" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n \"$URL\" ] && echo \"Please retrieve admin password from SSM parameter store /opsworks/cm/chef/$server/consolepassword\" >> output-artifactdir/cminfo.log; [ -n \"$CLIENTPEM\" ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/chef/$server/client.pem\" --type \"SecureString\" --value \"$CLIENTPEM\"; [ -n \"$CLIENTPEM\" ] && echo \"Please retrieve client PEM from SSM parameter store /opsworks/cm/chef/$server/client.pem\" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/chef.emptyartifact.output" % (cl_entry['ops_region'], cl_entry['ops_region'])
-    s += "      - ls output-tmpdir/puppet* > /dev/null 2>&1 && for i in output-tmpdir/puppet*;do server=`echo $i | sed  's/^.*puppet\.//; s/\.output$//'`; tail -1 $i | awk '{print $1}' > dump.out; [ -s dump.out ] && cat dump.out | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; URL=\"https://`head -1 $i`\"; tail -1 $i | awk '{print $2}' > dump2.out; [ -s dump2.out ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/puppet/$server/consolepassword\" --type \"SecureString\" --value $(cat dump2.out); [ -n \"$URL\" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n \"$URL\" ] && echo \"Please retrieve admin password from SSM parameter store /opsworks/cm/puppet/$server/consolepassword\" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/puppet.emptyartifact.output" % cl_entry['ops_region']
-    s += "      - ls output-artifactdir/cminfo.log > /dev/null 2>&1 && cat output-artifactdir/cminfo.log || echo empty > output-artifactdir/cminfo.log"
+    s += "      - ls output-tmpdir/chef* > /dev/null 2>&1 && for i in output-tmpdir/chef*;do Output=$(cat $i); server=`echo $i | sed 's/^.*chef\.//; s/\.output$//'`; URL=\"https://$(echo $Output | cut -d ' ' -f1)\"; CM_SKIT=$(echo $Output | cut -d ' ' -f2); CLIENTPEM=$(echo $Output | cut -d ' ' -f3-35); [ -n \"$CM_SKIT\" ] && echo $CM_SKIT | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; CM_PWD=$(echo $Output | cut -d ' ' -f36); [ -n \"$CM_PWD\" ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/chef/$server/consolepassword\" --type \"SecureString\" --value $CM_PWD; [ -n \"$URL\" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n \"$URL\" ] && echo \"Please retrieve admin password from SSM parameter store /opsworks/cm/chef/$server/consolepassword\" >> output-artifactdir/cminfo.log; [ -n \"$CLIENTPEM\" ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/chef/$server/client.pem\" --type \"SecureString\" --value \"$CLIENTPEM\"; [ -n \"$CLIENTPEM\" ] && echo \"Please retrieve client PEM from SSM parameter store /opsworks/cm/chef/$server/client.pem\" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/chef.emptyartifact.output\n" % (cl_entry['ops_region'], cl_entry['ops_region'])
+    s += "      - ls output-tmpdir/puppet* > /dev/null 2>&1 && for i in output-tmpdir/puppet*;do server=`echo $i | sed  's/^.*puppet\.//; s/\.output$//'`; tail -1 $i | awk '{print $1}' > dump.out; [ -s dump.out ] && cat dump.out | /usr/bin/python -m base64 -d > output-artifactdir/$server.zip; URL=\"https://`head -1 $i`\"; tail -1 $i | awk '{print $2}' > dump2.out; [ -s dump2.out ] && aws ssm --region %s put-parameter --name \"/opsworks/cm/puppet/$server/consolepassword\" --type \"SecureString\" --value $(cat dump2.out); [ -n \"$URL\" ] && echo $URL >> output-artifactdir/cminfo.log; [ -n \"$URL\" ] && echo \"Please retrieve admin password from SSM parameter store /opsworks/cm/puppet/$server/consolepassword\" >> output-artifactdir/cminfo.log;done || touch output-tmpdir/puppet.emptyartifact.output\n" % cl_entry['ops_region']
+    s += "      - ls output-artifactdir/cminfo.log > /dev/null 2>&1 && cat output-artifactdir/cminfo.log || echo empty > output-artifactdir/cminfo.log\n"
     if ops_sns_arn:
-        s += "      - echo %s >> output-artifactdir/cminfo.log" % ops_sns_arn
+        s += "      - echo %s >> output-artifactdir/cminfo.log\n" % ops_sns_arn
 
     s += """
 artifacts:
